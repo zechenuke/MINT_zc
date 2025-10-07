@@ -262,7 +262,7 @@ for t = 1:max(1, nTimepoints)
     % end
 
     %% Shuffled Joint Probability Distribution of A given B (psh_A_B)
-    if any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Psh(A)')) ||  any(strcmp(reqOutputs,'Pind(A)'))
+    if any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Psh(A)')) 
         shuffled_A = shuffle_core(B_t, FullA_t, 1, [1 0]);  % Initialize a shuffled version of A
         if  size(shuffled_A,2) > 1
             shuffled_A_1d = reduce_dim(shuffled_A',1);
@@ -350,9 +350,18 @@ for t = 1:max(1, nTimepoints)
 
             end
         end
-        PindAB = pind_AB;
-        PindA = sum(pind_AB, 2);
-    % 
+        % --- ensure each column of pind_A_B sums to 1 where there is mass
+        for bi = 1:size(pind_A_B,2)
+            s = sum(pind_A_B(:,bi));
+            if s > 0
+                pind_A_B(:,bi) = pind_A_B(:,bi) / s;
+            else
+                pind_A_B(:,bi) = 0;  % zero-mass bin -> all zeros
+            end
+        end
+
+        % PindAB = pind_AB;
+        PindA  = sum(pind_AB, 2);
     % 
     end
 
@@ -573,7 +582,7 @@ end
     
             % Existing (now full-support) names:
             case 'Pind(A)',        prob_dist_result = PindA;
-            case 'Pind(A|B)',      prob_dist_result = PindAB;
+            case 'Pind(A|B)',      prob_dist_result = pind_A_B;
     
             case 'Psh(A|B)',       prob_dist_result = psh_A_B;
             case 'Psh(A)',         prob_dist_result = psh_A;
