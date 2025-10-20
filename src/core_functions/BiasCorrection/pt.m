@@ -25,7 +25,8 @@ function bias = pt(C_ptr, Rtot, N)
     %   bias - Computed bias value
 
     % Number of non-zero C values
-    NnonZeroCvalues = sum(C_ptr(:) > 0);
+    C_ptr = C_ptr(:);
+    NnonZeroCvalues = nnz(C_ptr);
     
     % Initialize PnonZero array
     PnonZero = zeros(1, NnonZeroCvalues);

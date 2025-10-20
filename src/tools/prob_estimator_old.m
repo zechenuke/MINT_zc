@@ -1,4 +1,4 @@
-function prob_dists = prob_estimator(inputs, reqOutputs, opts)
+function prob_dists = prob_estimator_old(inputs, reqOutputs, opts)
 % *function prob_dists = prob_estimator(inputs, reqOutputs, opts)*
 %
 % The prob_estimator function calculates various probability distributions based on

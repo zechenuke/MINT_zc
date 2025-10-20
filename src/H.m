@@ -192,8 +192,11 @@ for t = 1:nTimepoints
                 if strcmp(opts.bias, 'bub')
                     bias = bub(nTrials * P_A);
                 elseif strcmp(opts.bias, 'pt')
-                    bias = (nTimepoints==1) * pt(inputs_1d{1}, nbinsA, nTrials) + ...
-                           (nTimepoints>1)  * pt(inputs_1d{1}(1,t,:), nbinsA, nTrials);
+                    if nTimepoints==1
+                        bias = pt(inputs_1d{1}, nbinsA, nTrials);
+                    else
+                        bias = pt(inputs_1d{1}(1,t,:), nbinsA, nTrials);
+                    end
                 else
                     bias = 0;
                 end
@@ -212,8 +215,14 @@ for t = 1:nTimepoints
                 if strcmp(opts.bias, 'bub')
                     bias = bub(nTrials * P_B);
                 elseif strcmp(opts.bias, 'pt')
-                    bias = (nTimepoints==1) * pt(inputs_1d{2}, nbinsB, nTrials) + ...
-                           (nTimepoints>1)  * pt(inputs_1d{2}(1,t,:), nbinsB, nTrials);
+                    if nTimepoints==1
+                        bias = pt(inputs_1d{2}, nbinsA, nTrials);
+                    else
+                        bias = pt(inputs_1d{2}(1,t,:), nbinsA, nTrials);
+                    end
+                    % bias = (nTimepoints==1) * pt(inputs_1d{2}, nbinsB, nTrials) + ...
+                    %        (nTimepoints>1)  * pt(inputs_1d{2}(1,t,:), nbinsB, nTrials);
+
                 else
                     bias = 0;
                 end

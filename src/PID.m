@@ -312,10 +312,13 @@ for t = 1:nTimepoints
     end
 end 
 
+MI_opts = opts;
+MI_opts.bin_method = {'none', 'none'};
+
 if opts.pid_constrained && ~opts.isKSG
-        I1 = MI({inputs_1d{1}, inputs_1d{end}}, {'I(A;B)'}, opts);
-        I2  = MI({inputs_1d{2}, inputs_1d{end}}, {'I(A;B)'}, opts);
-        I12 = MI({cat(1, inputs_1d{1}, inputs_1d{2}), inputs_1d{end}}, {'I(A;B)'}, opts);
+        I1  = cell2mat(MI({inputs_1d{1}, inputs_1d{end}}, {'I(A;B)'}, MI_opts));
+        I2  = cell2mat(MI({inputs_1d{2}, inputs_1d{end}}, {'I(A;B)'}, MI_opts));
+        I12 = cell2mat(MI({cat(1, inputs_1d{1}, inputs_1d{2}), inputs_1d{end}}, {'I(A;B)'}, MI_opts));
 end 
 PID_values = cell(1, length(reqOutputs));
 for t = 1:nTimepoints
@@ -325,16 +328,16 @@ for t = 1:nTimepoints
         end
         if strcmp(opts.chosen_atom, 'Red')
             red = PID_terms{t}(1);
-            PID_terms{t} = [red, I1{1}(t)-red, I2{1}(t)-red, I12{1}(t)-I1{1}(t)-I2{1}(t)+red];
+            PID_terms{t} = [red, I1(t)-red, I2(t)-red, I12(t)-I1(t)-I2(t)+red];
         elseif strcmp(opts.chosen_atom, 'Unq1')
             un1 = PID_terms{t}(2);
-            PID_terms{t} = [I1{1}(t)-un1, un1, I2{1}(t)-I1{1}(t)+un1, I12{1}(t)-I2{1}(t)-un1];
+            PID_terms{t} = [I1(t)-un1, un1, I2(t)-I1(t)+un1, I12(t)-I2(t)-un1];
         elseif strcmp(opts.chosen_atom, 'Unq2')
             un2 = PID_terms{t}(3);
-            PID_terms{t} = [I2{1}(t)-un2, I1{1}(t)-I2{1}(t)+un2, un2, I12{1}(t)-I1{1}(t)-un2];
+            PID_terms{t} = [I2(t)-un2, I1(t)-I2(t)+un2, un2, I12(t)-I1(t)-un2];
         elseif strcmp(opts.chosen_atom, 'Syn')
             syn = PID_terms{t}(4);
-            PID_terms{t} = [I1{1}(t)+I2{1}(t)-I12{1}(t)+syn, I12{1}(t)-I2{1}(t)-syn, I12{1}(t)-I1{1}(t)-syn , syn];
+            PID_terms{t} = [I1(t)+I2(t)-I12(t)+syn, I12(t)-I2(t)-syn, I12(t)-I1(t)-syn , syn];
         end
     end
     for i = 1:length(reqOutputs)
