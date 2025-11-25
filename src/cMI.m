@@ -206,9 +206,9 @@ opts_entropy.compute_nulldist = false;
 for i = 1:length(required_entropies)
     switch required_entropies{i}
         case 'H(A|C)'
-            [H_values{i}, H_plugin{i}, H_shuff_all{i}] = H({inputs{1}, inputs{3}}, {'H(A|B)'}, opts_entropy);          
+            [H_values{i}, H_plugin{i}, H_shuff_all{i}] = H({inputs_b{1}, inputs_b{3}}, {'H(A|B)'}, opts_entropy);          
         case 'H(A|B,C)'
-            [H_values{i}, H_plugin{i}, H_shuff_all{i}] = H({inputs{1}, cat(1,inputs{2}, inputs{3})}, {'H(A|B)'}, opts_entropy);
+            [H_values{i}, H_plugin{i}, H_shuff_all{i}] = H({inputs_b{1}, cat(1,inputs_b{2}, inputs_b{3})}, {'H(A|B)'}, opts_entropy);
     end
 end
 
