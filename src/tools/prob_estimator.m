@@ -68,37 +68,27 @@ function prob_dists = prob_estimator(inputs, reqOutputs, opts)
 % You should have received a copy of the GNU General Public License
 % along with this program.  If not, see <http://www.gnu.org/licenses
 
-%% --- Which outputs need linear/independent pieces?
-if (length(inputs)>2 && ~any(strcmp(reqOutputs,'P(A,B,C)'))) || (length(inputs)>3 && any(strcmp(reqOutputs,'P(A,B,C)')))
-    A_nd = inputs{end};
-else
-    A_nd = inputs{1};
-end
-if any(strcmp(reqOutputs,'P(A,B,C)')) || any(strcmp(reqOutputs,'Plin(A)')) || any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Pind(A)')) || any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Psh(A)'))
-    % if (length(inputs)>2 && ~any(strcmp(reqOutputs,'P(A,B,C)'))) || (length(inputs)>3 && any(strcmp(reqOutputs,'P(A,B,C)')))
-    %     A_nd = inputs{end};
-    % else
-    %     A_nd = inputs{1};
-    % end
+if any(strcmp(reqOutputs,'Plin(A)')) || any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Pind(A)')) || any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Psh(A)'))
+    if (length(inputs)>2 && ~any(strcmp(reqOutputs,'P(A,B,C)'))) || (length(inputs)>3 && any(strcmp(reqOutputs,'P(A,B,C)')))
+        A_nd = inputs{end};
+    else
+        A_nd =inputs{1};
+    end
     needLin = true;
 else
     needLin = false;
 end
 
-%% --- Load & normalize inputs (1-based codes), reduce dims to 1D indices for convenience
+% Preallocate cell array for the results
 prob_dists = cell(size(reqOutputs));
 nTimepoints = 0;
-
 for var = 1:length(inputs)
     letter = char(64 + var);
     data.(letter) = inputs{var};
-
-    % 1-based integer coding
     min_val = min(data.(letter), [], 'all');
     if min_val ~= 1
         data.(letter) = data.(letter) - min_val + 1;
     end
-
     if ndims(data.(letter)) == 2
         [nDim, nTrials] = size(data.(letter));
         nTimepointsCur = 1;
@@ -107,434 +97,329 @@ for var = 1:length(inputs)
     else
         error(['probEstim: Input ' letter ' is in the wrong shape.']);
     end
-
     nTimepoints = max(nTimepoints, nTimepointsCur);
     nTimepoints_data.(letter) = nTimepointsCur;
-
-    % If multidim along rows, keep both: the full multi-dim values & the 1D index view.
-    % if nDim > 1
-    %     data_full.(letter) = data.(letter);  % trials x time x dims
-    %     [data_1d.(letter), resps_grid]   = reduce_dim_for_time(data.(letter));% 1 x time x trials (indices)
-    % else
-    %     data_full.(letter) = permute(data.(letter), [2 3 1]);  % trials x time x 1
-    %     data_1d.(letter)   = data.(letter);                    % already 1D
-    % end
-    if nDim > 1
-        % dims x T x N  ->  N x T x dims
-        data_full.(letter) = permute(data.(letter), [3 2 1]);
-        data_1d.(letter)   = reduce_dim_for_time(data.(letter)); % update this helper (see #3 below)
+    if  nDim > 1
+        data_1d.(letter) = reduce_dim(data.(letter), 1);
     else
-        % 1 x N  or 1 x T x N  ->  N x T x 1
-        data_full.(letter) = permute(data.(letter), [3 2 1]);
-        data_1d.(letter)   = squeeze(permute(data.(letter), [3 2 1])); % N x T
+        data_1d.(letter) = data.(letter);
     end
-
 end
-
-%% --- Multi-time handling
+ 
+% Initialize output for each timepoint if necessary
 if nTimepoints > 1
-    prob_dists_time = cell(nTimepoints, length(reqOutputs));
+    prob_dists_time = cell(nTimepoints, length(reqOutputs));  % Preallocate for each timepoint
 end
 
-%% --- Main loop over time
+% Loop over each timepoint if nTimepoints > 1
 for t = 1:max(1, nTimepoints)
-    clear A_t B_t C_t FullA_t p_A p_B p_AB p_A_B psh_A psh_A_B p_all p_ABC ...
-          PindA PindAB PinabA PinabAB PlinA;
-
-    % Extract per-variable slices at this time
+    % If nTimepoints > 1, extract the data for the current timepoint
     for var = 1:length(inputs)
         letter = char(64 + var);
-
-        if nTimepoints_data.(letter) > 1
-            % trials x dims (full), trials x 1 (1d)
-            Full_t  = data_full.(letter)(:, t, :);     % nTrials x nDimsVar
-            Index_t = data_1d.(letter)(:, t);          % nTrials x 1
+        currentData_1d = data_1d.(letter);
+        nTimepointsCur =  nTimepoints_data.(letter);
+        if nTimepointsCur > 1 || (nTimepointsCur == 1 && ndims(inputs{var}) > 2)
+            currentData_t = squeeze(currentData_1d(:, t, :));          
+            if needLin
+                FullA_t = squeeze(A_nd(:, t, :));
+            end
         else
-            Full_t  = squeeze(data_full.(letter));
-            if size(Full_t,1) ~= nTrials, Full_t = Full_t.'; end
-            if ndims(inputs{var}) > 2
-                Index_t = squeeze(data_1d.(letter)(:, 1));
-            else
-                Index_t = data_1d.(letter).';
-                if size(Index_t,1) ~= nTrials, Index_t = Index_t.'; end
+            currentData_t = currentData_1d;  
+            if needLin
+                FullA_t = squeeze(A_nd);
             end
         end
-
-        if size(Full_t,1) ~= nTrials, Full_t = Full_t.'; end
-        if size(Index_t,1) ~= nTrials, Index_t = Index_t.'; end
-
-        data_full_t.(letter) = Full_t;   % nTrials x nDimsVar
-        data_1d_t.(letter)   = Index_t;  % nTrials x 1
+        if size(currentData_t, 1) ~= nTrials
+            currentData_t = currentData_t';  % Transponiere, wenn notwendig
+        end
+        data_t.(letter) = currentData_t;       
     end
 
-    % For models that need the full multi-dim A
-    if needLin
-        % Decide whether "A" should be taken from the last input or from A
-        useLastAsA = (length(inputs) > 2 && ~any(strcmp(reqOutputs,'P(A,B,C)'))) || ...
-                     (length(inputs) > 3 &&  any(strcmp(reqOutputs,'P(A,B,C)')));
+    if exist('FullA_t', 'var')
+        if size(FullA_t,1) ~= nTrials
+            FullA_t = FullA_t';
+        end
+        resps_grid = cell(1, size(FullA_t,2));
+    end
+
+    A_t = data_t.A;
+
+    if any(strcmp(reqOutputs, 'P(all)'))
+        bins = [];
+        all_t = A_t;
+        for var = 2:length(inputs)
+            letter = char(64 + var);
+            currentData_t = data_t.(letter);
+            all_t = cat(2,all_t, currentData_t);
+        end
+        for b = 1:size(all_t, 2)
+            k = max(all_t(:, b));
+            bins = [bins, k];
+        end
+        prob_dist_tmp = zeros(bins);
+        numtrials = size(all_t, 1);
+        for nT = 1:numtrials
+            index = num2cell(all_t(nT, :));
+            prob_dist_tmp(index{:}) = prob_dist_tmp(index{:}) + 1;
+        end
+        p_all = prob_dist_tmp / sum(prob_dist_tmp(:));
+    end
+
+    if any(strcmp(reqOutputs,'P(A,B,C)'))
+        bins = [];
+        B_t = data_t.B;
+        C_t = data_t.C;
+        ABC = cat(2, A_t, B_t, C_t);
+        for b = 1:size(ABC, 2)
+            k = max(ABC(:,b));%k = length(unique(data(i,:))); %
+            bins = [bins, k];
+        end
+        prob_dist_tmp = zeros(bins);
+        numtrials=size(ABC,1);
+        for nT = 1:numtrials
+            index = num2cell(ABC(nT, :));
+            prob_dist_tmp(index{:}) = prob_dist_tmp(index{:})+1;
+        end
+        p_ABC = prob_dist_tmp/sum(prob_dist_tmp(:));
+    end
+
     
-        if useLastAsA
-            lastLetter = char(64 + length(inputs));   % 'A','B','C',... for the last input
-            FullA_t = A_nd; %data_full_t.(lastLetter);       % nTrials x nDims_of_last_input
+    %% Joint Probability Distribution of B (p_B)
+    if any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Pind(A)')) ||any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Psh(A)'))|| any(strcmp(reqOutputs,'P(B)'))|| any(strcmp(reqOutputs,'P(A|B)'))
+        B_t = data_t.B;
+        unique_values = unique(B_t);
+        ranks = 1:length(unique_values); % Rank values in ascending order
+        ranked_B = arrayfun(@(x) ranks(unique_values == x), B_t);
+        B_t = ranked_B;
+
+        p_B = prob_estimator_simple(B_t);
+    end
+
+    %% Independent Joint Probability Distribution of A (plin_A)
+    % Compute independent joint probability as the product of marginal distributions
+    if any(strcmp(reqOutputs,'Plin(A)')) || any(strcmp(reqOutputs,'Pind(A)'))
+        % Marginal Probability Distributions of A (pmarg_A)
+        % plin_A = cell(1, nDimA);  % Cell array to store marginal distributions of each dimension of A
+        Ac = mat2cell(FullA_t', ones(1,size(FullA_t',1)), size(FullA_t',2));                 % Split Matrix Into Cells By Row
+        [~,edgesall] = histcounts(FullA_t, 'BinMethod','integers');
+        [hcell,~] = cellfun(@(X) histcounts(X',edgesall, 'Normalization', 'probability'), Ac, 'Uni',0);   % Do ‘histcounts’ On Each Column
+        plin_A = cell2mat(hcell);                                         % Recover Numeric Matrix From Cell Array
+
+        % for dim = 1:nDimA
+        %     [~, ~, idx_dim] = unique(A(:, dim));
+        %     counts_dim = accumarray(idx_dim, 1);
+        %     plin_A(dim,:) = counts_dim / nTrials;
+        % end
+    end
+
+
+    %% Joint Probability Distribution of A given B (p_A_B)
+    if any(strcmp(reqOutputs,'P(A,B)')) ||any(strcmp(reqOutputs,'P(A|B)')) || any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Psh(A)'))
+        % B_t = data_t.B;
+        
+        p_AB = prob_estimator_simple([A_t, B_t]);
+    end
+
+    %% Conditional Joint Probability Distribution of A given B (p_A_B)
+    if any(strcmp(reqOutputs,'P(A|B)'))
+        %p_A_B = (p_AB'./p_B)';
+        p_A_B = p_AB ./ sum(p_AB, 1);
+    end
+
+    %% Joint Probability Distribution of A (p_A)
+    if any(strcmp(reqOutputs,'P(A)')) || any(strcmp(reqOutputs,'Pind(A)'))
+        if exist('p_AB','var') == 1
+            p_A = sum(p_AB,2);
         else
-            FullA_t = A_nd; %data_full_t.A;                  % nTrials x nDims_of_A
+            p_A = prob_estimator_simple(A_t);
         end
     end
-
-    % Convenience local A/B/C matrices (nTrials x dims)
-    % A_full = data_full_t.C;                           % nTrials x KA
-    if (isfield(data_full_t,'C') & needLin), A_full = data_full_t.C; else, A_full = data_full_t.A; end
-    if isfield(data_full_t,'B'), B_full = data_full_t.B; else, B_full = []; end
-    if isfield(data_full_t,'C'), C_full = data_full_t.C; else, C_full = []; end
-
-    % ----- Build full supports (Cartesian) we will reuse -----
-    % A support (all patterns over A's dims)
-
-    % B support (if present) uses 1D values only (if B has multiple dims, we also go full Cartesian)
-    if ~isempty(B_full)
-        [B_patterns, B_levels] = build_support(B_full); % M_B x KB
-        % In the usual 1D-B case, M_B == number of unique(B)
-    end
-    if ~isempty(C_full)
-        [C_patterns, C_levels] = build_support(C_full);
-    end
-    
-    if needLin
-        [A_patterns, A_levels] = build_support(A_full);   % M_A x KA ; A_levels is 1xKA cell of unique values
-        A_idx = map_rows_to_patterns(A_full, A_patterns);     % nTrials x 1 in 1..M_A
-    else
-        A_patterns = (1:max(data_1d_t.A))';
-        A_levels = data_1d.A';
-        A_idx = A_levels;
-    end
-    % Precompute row -> pattern indices for speed
-    if ~isempty(B_full), B_idx = map_rows_to_patterns(B_full, B_patterns); end
-    if ~isempty(C_full), C_idx = map_rows_to_patterns(C_full, C_patterns); end
-
-    nTrials_local = size(A_full,1);
+    %% Independent Conditional Joint Probability Distribution of A (pind_A)
+    % if any(strcmp(reqOutputs,'Pind(A)'))
+    %     num_shuffles = 10;
+    %     pind_A_sum = 0;
+    %
+    %
+    %     for i = 1:num_shuffles
+    %         shuffled_A = shuffle_core(B_t, FullA_t, 1, [1 0]);
+    %         if size(shuffled_A, 2) > 1
+    %             shuffled_A_1d = reduce_dim(shuffled_A', 1);
+    %             shuffled_A_1d = shuffled_A_1d';
+    %         else
+    %             shuffled_A_1d = shuffled_A;
+    %         end
+    %
+    %         pind_A_tmp = prob_estimator_simple(shuffled_A_1d);
+    %         if i > 1 && size(pind_A_tmp,1)<size(pind_A_sum,1)
+    %             pind_A_tmp = [pind_A_tmp; zeros(size(pind_A_sum,1)-size(pind_A_tmp,1),1)];
+    %         end
+    %         if i > 1 && size(pind_A_tmp,1)>size(pind_A_sum,1)
+    %             pind_A_sum = [pind_A_sum; zeros(size(pind_A_tmp,1)-size(pind_A_sum,1),1)];
+    %         end
+    %         pind_A_sum = pind_A_sum + pind_A_tmp;
+    %     end
+    %     pind_A = pind_A_sum ./ num_shuffles;
     % end
 
-    %% ---------- P(all): joint over ALL inputs (full support) ----------
-    if any(strcmp(reqOutputs, 'P(all)'))
-        % Concatenate all variables' full values horizontally
-        ALL_full = A_full;
-        sup_all  = A_levels;
-        if ~isempty(B_full), ALL_full = [ALL_full, B_full]; sup_all = [sup_all, B_levels]; end %#ok<AGROW>
-        for var = 3:length(inputs)
-            letter = char(64 + var);
-            [Xpat, Xlev] = build_support(data_full_t.(letter)); %#ok<ASGLU>
-            ALL_full = [ALL_full, data_full_t.(letter)];        %#ok<AGROW>
-            sup_all  = [sup_all, Xlev];                          %#ok<AGROW>
+    %% Shuffled Joint Probability Distribution of A given B (psh_A_B)
+    if any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Psh(A)')) ||  any(strcmp(reqOutputs,'Pind(A)'))
+        shuffled_A = shuffle_core(B_t, FullA_t, 1, [1 0]);  % Initialize a shuffled version of A
+        if  size(shuffled_A,2) > 1
+            shuffled_A_1d = reduce_dim(shuffled_A',1);
+            shuffled_A_1d = shuffled_A_1d';
+        else
+            shuffled_A_1d = shuffled_A;
         end
-        [ALL_patterns, ~] = build_support_from_levels(sup_all);
-        ALL_idx = map_rows_to_patterns(ALL_full, ALL_patterns);
-
-        p_all = accumarray(ALL_idx, 1, [size(ALL_patterns,1), 1]);
-        p_all = p_all / sum(p_all);
+        psh_AB = prob_estimator_simple([shuffled_A_1d, B_t]);
+        psh_A_B = (psh_AB'./p_B)';
+        psh_A = sum(psh_AB,2);
     end
 
-    %% ---------- P(A,B,C) on full support ----------
-    if any(strcmp(reqOutputs,'P(A,B,C)'))
-        if isempty(B_full) || isempty(C_full)
-            error('P(A,B,C) requested but B or C is missing.');
+    %% Independent Conditional Joint Probability Distribution of A given B (pind_A_B)
+    if any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Pind(A)'))
+        % num_shuffles = 100;
+        % psh_AB_sum = 0;  % Initialisierung der Summe für psh_AB
+        % for k = 1:num_shuffles
+        %     shuffled_A = shuffle_core(B_t, FullA_t, 1, [1 0]);
+        %     if size(shuffled_A, 2) > 1
+        %         shuffled_A_1d = reduce_dim(shuffled_A', 1);
+        %         shuffled_A_1d = shuffled_A_1d';
+        %     else
+        %         shuffled_A_1d = shuffled_A;
+        %     end
+        %     psh_AB_tmp = prob_estimator_simple([shuffled_A_1d, B_t]);
+        %     if k > 1 && size(psh_AB_tmp,1)<size(psh_AB_sum,1)
+        %         psh_AB_tmp = [psh_AB_tmp; zeros(size(psh_AB_sum,1)-size(psh_AB_tmp,1),size(psh_AB_tmp,2))];
+        %     end
+        %     if k > 1 && size(psh_AB_tmp,1)>size(psh_AB_sum,1)
+        %         psh_AB_sum = [psh_AB_sum; zeros(size(psh_AB_tmp,1)-size(psh_AB_sum,1),size(psh_AB_tmp,2))];
+        %     end
+        %     psh_AB_sum = psh_AB_sum + psh_AB_tmp;
+        % end
+        % pind_ABtest = psh_AB_sum ./ num_shuffles;
+        % pind_A_Btest = (pind_ABtest' ./ p_B)';
+        % pind_Atest = sum(pind_ABtest, 2);
+        %
+        UniqueA = unique(A_t);
+        UniqueB = unique(B_t);
+        plin_A_B = [];
+        [~,edgesall] = histcounts(FullA_t, 'BinMethod','integers');
+
+        nbinsA = {};
+        for k=1:size(FullA_t,2)
+            nbinsA{k} =  1:length(unique(FullA_t(:,k)));
         end
-        % szA = size(A_patterns,1); szB = size(B_patterns,1); szC = size(C_patterns,1);
-        % lin = sub2ind([szA, szB, szC], A_idx, B_idx, C_idx);
-        % counts = accumarray(lin, 1, [szA*szB*szC, 1]);
-        % p_ABC = reshape(counts, szA, szB, szC);
-        % p_ABC = p_ABC / sum(p_ABC(:));
-
-        [A,~,ia] = unique(data_1d_t.A);
-        [B,~,ib] = unique(data_1d_t.B);
-        [C,~,ic] = unique(data_1d_t.C);
-        
-        P = accumarray([ia ib ic], 1, [length(A) length(B) length(C)]);
-        p_ABC = P / sum(P(:));
-
-
-    end
-
-    %% ---------- P(B) (full support over B) ----------
-    if any(strcmp(reqOutputs,'P(B)')) || any(strcmp(reqOutputs,'P(A|B)')) || any(strcmp(reqOutputs,'P(A,B)')) ...
-                                      || any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Pind(A|B)')) ...
-                                      || any(strcmp(reqOutputs,'Psh(A)'))
-        if isempty(B_full), error('B requested but missing.'); end
-        p_B = accumarray(B_idx, 1, [size(B_patterns,1), 1]) / nTrials_local;
-    end
-
-    %% Independent per-dimension probability distributions of A (plin_A)
-    % Each row k is P(A_k = i), i over that row's own support.
-    if any(strcmp(reqOutputs,'Plin(A)'))
-        KA = size(A_nd, 1);                        % #dims in A at this time
-        nbinsA = zeros(1, KA);
-        for k = 1:KA
-            nbinsA(k) = numel(unique(A_nd(k,:)));  % support size for dim k
+        dim_to_collapse = size(FullA_t,2);
+        [resps_grid{1:dim_to_collapse}] = ndgrid(nbinsA{:});
+        resps_grid = reshape(cat(dim_to_collapse+1, resps_grid{:}), [], dim_to_collapse);
+        resps_gridc = mat2cell(resps_grid', ones(1,size(resps_grid',1)), size(resps_grid',2));
+        pind_A_B= [];
+        for k=1:length(UniqueB)
+            stimA_t = FullA_t(B_t==UniqueB(k),:);
+            Ac = mat2cell(stimA_t', ones(1,size(stimA_t',1)), size(stimA_t',2));                 % Split Matrix Into Cells By Row
+            [hcell,~] = cellfun(@(X) histcounts(X',edgesall, 'Normalization', 'probability'), Ac, 'Uni',0);   % Do ‘histcounts’ On Each Column
+            hcell2 =cellfun(@(X, Y) X(Y), hcell, resps_gridc, 'Uni', 0);
+            condprob = cell2mat(hcell2);
+            pind_Ared_b = prod(condprob,1);
+            pind_A_B = [pind_A_B pind_Ared_b'];
         end
-        maxbins = max(nbinsA);
-        plin_A  = zeros(KA, maxbins);
-    
-        for k = 1:KA
-            lvls = unique(A_nd(k,:));              % sorted support for dim k
-            vals = A_nd(k,:);                      % 1 x nTrials
-    
-            % Map values to indices on this dim's support
-            [~, pos] = ismember(vals, lvls);       % pos in 1..numel(lvls) or 0 if not found
-            pos = pos(:);                          % <-- ensure column
-            pos = pos(pos > 0);                    % <-- drop any zeros (robustness)
-    
-            % Counts aligned to lvls
-            cnt = accumarray(pos, 1, [numel(lvls), 1]);
-    
-            % Normalize to probabilities
-            pk  = cnt / numel(vals);               % or / nTrials_local if you prefer
-            plin_A(k, 1:numel(lvls)) = pk.';       % row k = P(A_k = i)
+        % pind_A_B = plin_A_B;
+        pind_AB = pind_A_B;% * p_B(p_B>0);
+        for rowi=1:length(UniqueA)
+            pind_AB(rowi,:) = pind_A_B(rowi,:) .* p_B(p_B>0)';
         end
-    end
+        zero_positions = find(p_B == 0);
+        if length(p_B) > size(pind_A_B,2)
+            for zp=length(zero_positions)
+                % Define the row of zeros
+                new_col = zeros(size(pind_AB, 1),1);  % A col of zeros with the same number of rows as A
+                % Specify the location where you want to insert the new col
+                col_to_insert = zero_positions(zp);
+                % Insert the new col
+                if col_to_insert ==1
+                    pind_AB = [new_col, pind_AB];
+                elseif col_to_insert == length(p_B)
+                    pind_AB = [pind_AB, new_col];
+                else
+                    pind_AB = [pind_AB(:, 1:col_to_insert-1), new_col, pind_AB(:, col_to_insert:end)];
+                end
 
-
-
-    %% ---------- P(A) (full support over A) ----------
-    if any(strcmp(reqOutputs,'P(A)')) || any(strcmp(reqOutputs,'Pind(A)'))
-        try
-            p_A = accumarray(A_idx, 1, [size(A_patterns,1), 1]) / nTrials_local;
-        catch 
-            disp('hola')
-        end
-    end
-
-    %% ---------- P(A,B) (full support: |A| x |B|) ----------
-    if any(strcmp(reqOutputs,'P(A,B)')) || any(strcmp(reqOutputs,'P(A|B)')) || ...
-       any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Psh(A)'))
-        if isempty(B_full), error('P(A,B) requested but B is missing.'); end
-        lin = sub2ind([size(A_patterns,1), size(B_patterns,1)], A_idx, B_idx);
-        countsAB = accumarray(lin, 1, [size(A_patterns,1)*size(B_patterns,1), 1]);
-        p_AB = reshape(countsAB, size(A_patterns,1), size(B_patterns,1));
-        p_AB = p_AB / sum(p_AB(:));
-    end
-
-    %% ---------- P(A|B) (column-normalized P(A,B)) ----------
-    if any(strcmp(reqOutputs,'P(A|B)'))
-        p_A_B = normalize_cols(p_AB);
-    end
-
-    %% ---------- Shuffled models (keep full A support) ----------
-    if any(strcmp(reqOutputs,'Psh(A|B)')) || any(strcmp(reqOutputs,'Psh(A)')) %|| any(strcmp(reqOutputs,'Pind(A|B)'))
-        % Shuffle A *within* B (preserving B's distribution)
-        shuffled_A = shuffle_core(data_1d_t.B, A_full, 1, [1 0]);  % returns nTrials x KA values
-        % Map shuffled rows to A's full support
-        A_idx_sh = map_rows_to_patterns(shuffled_A, A_patterns);
-        % Joint with B on full grid
-        lin_sh = sub2ind([size(A_patterns,1), size(B_patterns,1)], A_idx_sh, B_idx);
-        counts_sh = accumarray(lin_sh, 1, [size(A_patterns,1)*size(B_patterns,1), 1]);
-        psh_AB = reshape(counts_sh, size(A_patterns,1), size(B_patterns,1));
-        psh_AB = psh_AB / sum(psh_AB(:));
-
-        psh_A   = sum(psh_AB, 2);
-        psh_A_B = normalize_cols(psh_AB);
-    end
-
-%% ---------- Independent Pind via implicit-expansion tensors (no kron) ----------
-if any(strcmp(reqOutputs,'Pind(A|B)')) || any(strcmp(reqOutputs,'Pind(A)'))
-    % Dimensions of A based on current time-slice
-    K   = size(A_full, 2);                 % #dims of A
-    nAk = cellfun(@numel, A_levels);       % bins per A-dim (aligned to A_levels)
-    MA  = prod(nAk);                       % |A| (full Cartesian support)
-    Ntr = size(A_full,1);
-
-    % helper to multiply per-dim marginals into a K-D tensor then vectorize
-
-
-    if ~isempty(B_full)
-        % ----- Conditional independent: Pind(A|B=b) = ⊗_k P(A_k|B=b) (without kron) -----
-        nB = size(B_patterns, 1);
-        PindA_B = zeros(MA, nB);
-
-        for bi = 1:nB
-            sel = (B_idx == bi);
-            tot = sum(sel);
-            if tot == 0, continue; end
-
-            pk = cell(1, K);
-            for k = 1:K
-                [~, pos] = ismember(A_full(sel, k), A_levels{k});
-                pos = pos(:); pos = pos(pos > 0);
-                cnt = accumarray(pos, 1, [nAk(k), 1]);
-                pk{k} = cnt / tot;                     % column
             end
-
-            PindA_B(:, bi) = tensor_from_pk(pk, nAk);
         end
+        pind_A = sum(pind_AB, 2);
 
-        % ----- Unconditional independent as B-marginal of the above -----
-        if any(strcmp(reqOutputs,'Pind(A)'))
-            if ~exist('p_B','var')
-                p_B = accumarray(B_idx, 1, [size(B_patterns,1), 1]) / Ntr;
-            end
-            PindA = PindA_B * p_B;   % |A| x 1
-        end
-
-    else
-        % ----- No B provided: Pind(A) = ⊗_k P(A_k) (without kron) -----
-        if any(strcmp(reqOutputs,'Pind(A)'))
-            pk = cell(1, K);
-            for k = 1:K
-                [~, pos] = ismember(A_full(:, k), A_levels{k});
-                pos = pos(:); pos = pos(pos > 0);
-                cnt = accumarray(pos, 1, [nAk(k), 1]);
-                pk{k} = cnt / Ntr;                      % column
-            end
-            PindA = tensor_from_pk(pk, nAk);           % |A| x 1
-        end
-
-        if any(strcmp(reqOutputs,'Pind(A|B)'))
-            error('Pind(A|B) requested but B is missing.');
-        end
     end
-end
 
 
 
-    %% ---------- Collect outputs for this time ----------
+    %% Collate all results
     for outidx = 1:length(reqOutputs)
-        name = reqOutputs{outidx};
-        switch name
-            case 'P(A)',         prob_dist_result = p_A;
-            case 'Plin(A)',      prob_dist_result = plin_A;
-            case 'P(B)',         prob_dist_result = p_B;
-            case 'P(A,B)',       prob_dist_result = p_AB;
-            case 'P(A|B)',       prob_dist_result = p_A_B;
-            case 'Pind(A)',      prob_dist_result = PindA;
-            case 'Pind(A|B)',    prob_dist_result = PindA_B;
-            case 'Psh(A|B)',     prob_dist_result = psh_A_B;
-            case 'Psh(A)',       prob_dist_result = psh_A;
-            case 'P(A,B,C)',     prob_dist_result = p_ABC;
-            case 'P(all)',       prob_dist_result = p_all;
-            otherwise, error('Unknown reqOutput: %s', name);
+        switch reqOutputs{outidx}
+            case 'P(A)', prob_dist_result = p_A;
+            case 'Plin(A)', prob_dist_result = plin_A;
+            case 'P(A,B)', prob_dist_result = p_AB;
+            case 'P(A|B)', prob_dist_result = p_A_B;
+            case 'P(B)', prob_dist_result = p_B;
+            case 'Pind(A)', prob_dist_result = pind_A;
+            case 'Pind(A|B)', prob_dist_result = pind_A_B;
+            case 'Psh(A|B)', prob_dist_result = psh_A_B;
+            case 'Psh(A)', prob_dist_result = psh_A;
+            case 'P(A,B,C)', prob_dist_result = p_ABC;
+            case 'P(all)', prob_dist_result = p_all;
         end
 
+
+        % If multiple timepoints, store result per timepoint
         if nTimepoints > 1
             prob_dists{t, outidx} = prob_dist_result;
         else
-            prob_dists{outidx} = prob_dist_result;
+            prob_dists{outidx} = prob_dist_result;  % If single timepoint, store directly
         end
     end
 end
 
-%% ==================== helpers ====================
 
-function [idx1d, resps_grid] = reduce_dim_for_time(R)
-    % Wanted shape:
-    %   - 2D (nDim x nTrials):  nTrials x 1
-    %   - 3D (nDim x T x N):    nTrials x T
-    if size(R,1) > 1
-        if ndims(R) == 2
-            [tmp, resps_grid]   = reduce_dim(R, 1);   % 1 x nTrials
-            idx1d = tmp.';              % nTrials x 1
+    function p = prob_estimator_simple(A)
+        warning('off', 'all');
+
+        if size(A, 2) == 2
+            % For 2D case
+            % Using accumarray to compute joint histogram for two variables
+            p = accumarray(A, 1);  % Increment A to avoid zero-indexing issues
+            p = p / sum(p(:));  % Normalize to get probabilities
         else
-            T     = size(R,2);
-            N     = size(R,3);
-            idx1d = zeros(N, T);        % nTrials x T
-            for tt = 0:T-1
-                [tmp, resps_grid] = reduce_dim(R(:,tt+1,:), 1);  % 1 x 1 x N
-                idx1d(:, tt+1) = squeeze(tmp).';   % N x 1 -> column
-            end
+            % For 1D case
+            % Using accumarray to compute histogram
+            p = accumarray(A, 1);  % Increment A to avoid zero-indexing issues
+            p = p / sum(p);  % Normalize to get probabilities
         end
-    else
-        % Already 1D along rows; make sure trials are rows
-        if ndims(R) == 2            % 1 x nTrials
-            idx1d = R.';            % nTrials x 1
-        else                        % 1 x T x nTrials
-            idx1d = squeeze(permute(R, [3 2 1])); % nTrials x T
+        warning('on', 'all');
+    end
+
+    function products = calculate_products(A)
+        % This function calculates all possible products across the rows of the input matrix A.
+
+        % Get the number of rows and columns in the input matrix
+        [num_rows, num_cols] = size(A);
+
+        % Initialize cell array to hold each row for ndgrid
+        row_cells = cell(1, num_rows);
+
+        % Fill the cell array with each row of the matrix
+        for i = 1:num_rows
+            row_cells{i} = A(i, :);
         end
-    end
-end
 
+        % Use ndgrid to create grids for all combinations
+        [grids{1:num_rows}] = ndgrid(row_cells{:});
 
-function [patterns, levels] = build_support(X)
-    % X: nTrials x K (values are integers starting at 1, but not necessarily contiguous)
-    K = size(X,2);
-    levels = cell(1,K);
-    for k = 1:K
-        levels{k} = unique(X(:,k));
-    end
-    patterns = build_support_from_levels(levels);
-end
-
-function [patterns, levels] = build_support_from_levels(levels)
-    % levels: 1xK cell, each is a (sorted) vector of unique values
-    K = numel(levels);
-    [grids{1:K}] = ndgrid(levels{:});
-    patterns = reshape(cat(K+1, grids{:}), [], K);  % (#patterns x K)
-end
-
-function idx = map_rows_to_patterns(X, patterns)
-    % Map each row of X (n x K) to row index in 'patterns' (M x K).
-    [tf, idx] = ismember(X, patterns, 'rows'); 
-    % If any row wasn't in the Cartesian support (shouldn't happen), set 0
-    idx(~tf) = 0;
-    if any(~tf)
-        warning('Some rows not found in full support; assigning zero index.');
-        disp(X);
-        disp('patterns')
-        disp(patterns)
-    end
-    % Replace zeros with 1 and we'll zero-weight later if needed
-    idx(idx==0) = 1;
-end
-
-function M = normalize_cols(M)
-    s = sum(M,1);
-    s(s==0) = 1;
-    M = M ./ s;
-end
-
-function v = normvec(v)
-    s = sum(v);
-    if s > 0, v = v / s; end
-end
-
-end
-        % Helper: balanced Kronecker product over a cell array of column vectors
-function v = kronall(vecs)
-    if numel(vecs) == 1
-        v = vecs{1};
-    else
-        mid = floor(numel(vecs) / 2);
-        v = kron(kronall(vecs(1:mid)), kronall(vecs(mid+1:end)));
-    end
-end
-
-function v = tensor_from_pk(pkCell, nAkLocal)
-    % pkCell: 1xK cell, each a marginal (vector)
-    % nAkLocal: 1xK bins per dim
-    K = numel(pkCell);
-    sizes = nAkLocal(:).';
-    P = 1;
-
-    for kk = 1:K
-        vec = pkCell{kk}(:); % columnize
-        if numel(vec) ~= sizes(kk)
-            error('tensor_from_pk: length mismatch at dim %d (got %d, expected %d).', ...
-                  kk, numel(vec), sizes(kk));
+        % Compute the products across all dimensions
+        products = 1;
+        for i = 1:num_rows
+            products = products .* grids{i};
         end
-        shp = ones(1, max(K,2)); % ensure at least 2D
-        shp(kk) = sizes(kk);
-        P = P .* reshape(vec, shp);  % implicit expansion
-    end
 
-    v = P(:);
-    s = sum(v);
-    if s > 0, v = v / s; end
-end
-
-
-function idx1d = reduce_dim_for_time(R) % R: dims x T x N
-    if ndims(R)==2, R = reshape(R, size(R,1), 1, size(R,2)); end
-    [K,T,N] = size(R);
-    idx1d = zeros(N,T);
-    for tt = 1:T
-        X = squeeze(R(:,tt,:)).';   % N x K
-        [levels,~,idx] = unique(X, 'rows','stable');
-        idx1d(:,tt) = idx;          % 1..|levels|
+        % Reshape the output to a proper size
+        products = reshape(products, [], num_cols^num_rows);
     end
 end
